@@ -51,15 +51,41 @@ async function generateThumbnail(inputPath, outputDir) {
         return;
       }
 
+      // Get video duration in seconds
+      const duration = metadata.format.duration;
+      
+      // Generate 10 thumbnails throughout the video
+      const numberOfThumbnails = 10;
+      const interval = duration / numberOfThumbnails;
+      
+      // Create timestamps array (in seconds)
+      const timestamps = Array.from(
+        { length: numberOfThumbnails }, 
+        (_, i) => Math.floor(interval * i)
+      );
+
       ffmpeg(inputPath)
         .screenshots({
-          timestamps: [2],
+          timestamps: timestamps,
           folder: outputDir,
-          filename: 'thumbnail.jpg',
-          size: '1280x720'
+          filename: 'thumbnail-%i.jpg',  // %i will be replaced with the index
+          size: '160x90'  // Standard YouTube thumbnail preview size
         })
         .on('end', () => {
-          resolve(true);
+          // Generate one larger thumbnail for video preview
+          ffmpeg(inputPath)
+            .screenshots({
+              timestamps: [1],  // Take from first second
+              folder: outputDir,
+              filename: 'thumbnail.jpg',
+              size: '1280x720'  // Larger thumbnail for video preview
+            })
+            .on('end', () => {
+              resolve(true);
+            })
+            .on('error', (err) => {
+              reject(err);
+            });
         })
         .on('error', (err) => {
           reject(err);
@@ -202,19 +228,32 @@ router.post('/convert', upload.single('file'), async (req, res) => {
 router.get('/convert/:conversionId', (req, res) => {
   const { conversionId } = req.params;
   const conversion = conversions.get(conversionId);
+  const convertedPath = path.join('converted', conversionId);
+  const convertedPathMp4 = path.join('converted', `${conversionId}.mp4`);
 
-  if (!conversion) {
-    return res.status(404).json({ error: 'Conversion not found' });
+  // Check if the output exists based on conversion type
+  const outputExists = fs.existsSync(convertedPath) || fs.existsSync(convertedPathMp4);
+  if (!outputExists || !conversion) {
+    return res.status(404).json({ error: 'Converted file not found' });
   }
 
-  if (conversion.status === 'completed') {
-    if (conversion.type === 'hls') {
+  if (conversion?.status === 'completed' || outputExists) {
+    // Add thumbnail URLs to the response
+    const thumbnailUrls = {
+      main: `/media/thumbnails/${conversionId}/thumbnail.jpg`,
+      previews: Array.from({ length: 10 }, (_, i) => 
+        `/media/thumbnails/${conversionId}/thumbnail-${i}.jpg`
+      )
+    };
+
+    if (conversion?.type === 'hls') {
       return res.json({
         status: 'completed',
-        playlistUrl: `/converted/${conversionId}/playlist.m3u8`
+        playlistUrl: `/converted/${conversionId}/playlist.m3u8`,
+        thumbnails: thumbnailUrls
       });
     } else {
-      return res.download(conversion.outputPath, (err) => {
+      return res.download(conversion?.outputPath, (err) => {
         if (err) {
           res.status(500).json({ error: 'Error downloading file' });
         }
@@ -239,6 +278,66 @@ router.get('/convert/:conversionId', (req, res) => {
     status: conversion.status,
     queuePosition: conversion.status === 'queued' ? conversion.queuePosition : null
   });
+});
+
+router.delete('/convert/:conversionId', (req, res) => {
+  const { conversionId } = req.params;
+  const conversion = conversions.get(conversionId);
+  
+  try {
+    // Delete from queue if present
+    const queueIndex = conversionQueue.findIndex(item => item.conversionId === conversionId);
+    if (queueIndex !== -1) {
+      conversionQueue.splice(queueIndex, 1);
+    }
+
+    // Delete input file if it exists
+    if (conversion?.inputPath && fs.existsSync(conversion.inputPath)) {
+      fs.unlinkSync(conversion.inputPath);
+    }
+
+    // Delete converted files and folder
+    const convertedPath = path.join('converted', conversionId);
+    const convertedPathMp4 = path.join('converted', `${conversionId}.mp4`);
+
+    if(!fs.existsSync(convertedPath) && !fs.existsSync(convertedPathMp4)) {
+      return res.status(404).json({ error: 'Conversion not found', conversionId });
+    }
+
+    // Check and delete HLS directory if it exists
+    if (fs.existsSync(convertedPath)) {
+      if (fs.lstatSync(convertedPath).isDirectory()) {
+        fs.rmSync(convertedPath, { recursive: true, force: true });
+      } else {
+        fs.unlinkSync(convertedPath);
+      }
+    }
+
+    // Check and delete MP4 file if it exists
+    if (fs.existsSync(convertedPathMp4)) {
+      fs.unlinkSync(convertedPathMp4);
+    }
+
+    // Remove from conversions map
+    conversions.delete(conversionId);
+    
+    res.json({ message: 'All files deleted', conversionId });
+  } catch (error) {
+    console.error(`Error deleting conversion: ${error.message}`);
+    res.status(500).json({ error: 'Failed to delete conversion' });
+  }
+});
+
+// GET route to serve thumbnails
+router.get('/thumbnails/:conversionId/:filename', (req, res) => {
+  const { conversionId, filename } = req.params;
+  const thumbnailPath = path.join('converted', conversionId, filename);
+  
+  if (fs.existsSync(thumbnailPath)) {
+    res.sendFile(path.resolve(thumbnailPath));
+  } else {
+    res.status(404).json({ error: 'Thumbnail not found' });
+  }
 });
 
 module.exports = router; 
