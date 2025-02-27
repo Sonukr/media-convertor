@@ -1,0 +1,35 @@
+/* Ensure the video player's container has a black background */
+div.video-react {
+    color: white !important;
+    height: 100% !important;
+    width: 100% !important;
+    background-color: transparent !important;
+    padding: 0 !important;
+}
+
+
+
+/* Ensure the video area inherits the black background */
+div.video-react .video-react-video {
+    background-color: transparent !important;
+}
+
+div.video-react .video-react-play-control {
+    color: #FF702A !important;
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+}
+
+.video-react .video-react-video{
+    position: relative !important;
+}
+
+.audio-player .video-react{
+    height: 0!important;
+}
