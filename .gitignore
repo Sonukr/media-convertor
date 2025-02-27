@@ -9,6 +9,8 @@
 /server/node_modules
 /server/converted
 /server/uploads
+/frontend/node_modules
+
 
 /.pnp
 .pnp.js

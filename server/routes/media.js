@@ -19,20 +19,26 @@ let isProcessing = false;
 
 // Process MP4 conversion
 async function processMP4Conversion(conversionId, inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    // Ensure output directory exists
+    if (!fs.existsSync(outputPath)) {
+      fs.mkdirSync(outputPath, { recursive: true });
+    }
+
     ffmpeg(inputPath)
       .toFormat('mp4')
       .on('progress', (progress) => {
         const percentComplete = Math.round(progress.percent * 100) / 100;
         console.log(`MP4 Conversion [${conversionId}]: ${percentComplete}% complete.`);
       })
-      .on('end', () => {
+      .on('end', async() => {
+        await generateThumbnail(inputPath, outputPath);
         resolve();
       })
       .on('error', (err) => {
         reject(err);
       })
-      .save(outputPath);
+      .save(path.join(outputPath, 'video.mp4'));
   });
 }
 
@@ -181,12 +187,7 @@ router.post('/convert', upload.single('file'), async (req, res) => {
     const conversionId = uuidv4();
     const type = req.body.type || 'mp4'; // Default to mp4 if not specified
     
-    let outputPath;
-    if (type === 'hls') {
-      outputPath = path.join('converted', conversionId);
-    } else {
-      outputPath = path.join('converted', `${conversionId}.mp4`);
-    }
+    const outputPath = path.join('converted', conversionId);
     
     // Ensure converted directory exists
     if (!fs.existsSync('converted')) {
@@ -224,15 +225,91 @@ router.post('/convert', upload.single('file'), async (req, res) => {
   }
 });
 
+// GET route to list all conversions
+router.get('/convert', (req, res) => {
+  try {
+    // Get tracked conversions and convert to array of objects
+    const activeConversions = Array.from(conversions.entries()).map(([id, conv, status, type]) => ({
+      conversionId: id,
+      status, type,
+      thumbnails: fs.existsSync(path.join('converted', id, 'thumbnail.jpg')) ? {
+        main: `/media/thumbnails/${id}/thumbnail.jpg`,
+        previews: Array.from({ length: 10 }, (_, i) => 
+          fs.existsSync(path.join('converted', id, `thumbnail-${i}.jpg`)) ?
+            `/media/thumbnails/${id}/thumbnail-${i}.jpg` : null
+        ).filter(Boolean)
+      } : null,
+      ...(conv.type === 'hls' ? {
+        url: `/media/converted/${id}/master.m3u8`
+      } : {
+        url: `/media/converted/${id}/video.mp4`
+      })
+    }));
+    
+    // Scan converted directory for completed conversions not in memory
+    const completedFiles = [];
+    if (fs.existsSync('converted')) {
+      const files = fs.readdirSync('converted');
+      files.forEach(file => {
+        const fullPath = path.join('converted', file);
+        const stats = fs.statSync(fullPath);
+        
+        // Skip if not a directory or already in conversions map
+        if (!stats.isDirectory() || conversions.has(file)) {
+          return;
+        }
+
+        let conversionData = {
+          status: 'completed',
+          conversionId: file,
+          // outputPath: fullPath
+        };
+
+        // Check for HLS conversion
+        const m3u8Path = path.join(fullPath, 'master.m3u8');
+        if (fs.existsSync(m3u8Path)) {
+          conversionData.type = 'hls';
+          conversionData.url = `/media/converted/${file}/master.m3u8`;
+        } 
+        // Check for MP4 conversion
+        else if (fs.existsSync(path.join(fullPath, 'video.mp4'))) {
+          conversionData.type = 'mp4';
+          conversionData.url = `/media/converted/${file}/video.mp4`;
+        }
+
+        // Check for thumbnails
+        if (fs.existsSync(path.join(fullPath, 'thumbnail.jpg'))) {
+          conversionData.thumbnails = {
+            main: `/media/thumbnails/${file}/thumbnail.jpg`,
+            previews: Array.from({ length: 10 }, (_, i) => 
+              fs.existsSync(path.join(fullPath, `thumbnail-${i}.jpg`)) ?
+                `/media/thumbnails/${file}/thumbnail-${i}.jpg` : null
+            ).filter(Boolean)
+          };
+        }
+
+        if (conversionData.type) {  // Only add if it's a valid conversion
+          completedFiles.push(conversionData);
+        }
+      });
+    }
+
+    // Combine active and completed conversions
+    res.json([...activeConversions, ...completedFiles]);
+  } catch (error) {
+    console.error('Error listing conversions:', error);
+    res.status(500).json({ error: 'Failed to list conversions' });
+  }
+});
+
 // GET route to check conversion status and download file
 router.get('/convert/:conversionId', (req, res) => {
   const { conversionId } = req.params;
   const conversion = conversions.get(conversionId);
   const convertedPath = path.join('converted', conversionId);
-  const convertedPathMp4 = path.join('converted', `${conversionId}.mp4`);
 
-  // Check if the output exists based on conversion type
-  const outputExists = fs.existsSync(convertedPath) || fs.existsSync(convertedPathMp4);
+  // Check if the output exists
+  const outputExists = fs.existsSync(convertedPath);
   if (!outputExists || !conversion) {
     return res.status(404).json({ error: 'Converted file not found' });
   }
@@ -249,11 +326,12 @@ router.get('/convert/:conversionId', (req, res) => {
     if (conversion?.type === 'hls') {
       return res.json({
         status: 'completed',
-        playlistUrl: `/converted/${conversionId}/playlist.m3u8`,
+        url: `/media/converted/${conversionId}/master.m3u8`,
         thumbnails: thumbnailUrls
       });
     } else {
-      return res.download(conversion?.outputPath, (err) => {
+      const videoPath = path.join(convertedPath, 'video.mp4');
+      return res.download(videoPath, (err) => {
         if (err) {
           res.status(500).json({ error: 'Error downloading file' });
         }
@@ -298,24 +376,16 @@ router.delete('/convert/:conversionId', (req, res) => {
 
     // Delete converted files and folder
     const convertedPath = path.join('converted', conversionId);
-    const convertedPathMp4 = path.join('converted', `${conversionId}.mp4`);
 
-    if(!fs.existsSync(convertedPath) && !fs.existsSync(convertedPathMp4)) {
+    if(!fs.existsSync(convertedPath)) {
       return res.status(404).json({ error: 'Conversion not found', conversionId });
     }
 
     // Check and delete HLS directory if it exists
-    if (fs.existsSync(convertedPath)) {
-      if (fs.lstatSync(convertedPath).isDirectory()) {
-        fs.rmSync(convertedPath, { recursive: true, force: true });
-      } else {
-        fs.unlinkSync(convertedPath);
-      }
-    }
-
-    // Check and delete MP4 file if it exists
-    if (fs.existsSync(convertedPathMp4)) {
-      fs.unlinkSync(convertedPathMp4);
+    if (fs.lstatSync(convertedPath).isDirectory()) {
+      fs.rmSync(convertedPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(convertedPath);
     }
 
     // Remove from conversions map
@@ -328,6 +398,31 @@ router.delete('/convert/:conversionId', (req, res) => {
   }
 });
 
+// Update existing HLS route to handle both paths
+router.get(['/converted/:conversionId/master.m3u8'], (req, res) => {
+  const { conversionId } = req.params;
+  const hlsPath = path.join('converted', conversionId, 'master.m3u8');
+  
+  // Add error handling
+  if (!fs.existsSync(hlsPath)) {
+    return res.status(404).json({ error: 'HLS playlist not found' });
+  }
+  
+  res.sendFile(path.resolve(hlsPath));
+});
+
+// Also need to add a route for HLS segments
+router.get(['/converted/:conversionId/segment_:id.ts'], (req, res) => {
+  const { conversionId, id } = req.params;
+  const segmentPath = path.join('converted', conversionId, `segment_${id}.ts`);
+  
+  if (!fs.existsSync(segmentPath)) {
+    return res.status(404).json({ error: 'Segment not found' });
+  }
+  
+  res.sendFile(path.resolve(segmentPath));
+});
+
 // GET route to serve thumbnails
 router.get('/thumbnails/:conversionId/:filename', (req, res) => {
   const { conversionId, filename } = req.params;
@@ -338,6 +433,18 @@ router.get('/thumbnails/:conversionId/:filename', (req, res) => {
   } else {
     res.status(404).json({ error: 'Thumbnail not found' });
   }
+});
+
+// Add route to serve MP4 files
+router.get(['/converted/:conversionId/video.mp4'], (req, res) => {
+  const { conversionId } = req.params;
+  const videoPath = path.join('converted', conversionId, 'video.mp4');
+  
+  if (!fs.existsSync(videoPath)) {
+    return res.status(404).json({ error: 'Video file not found' });
+  }
+  
+  res.sendFile(path.resolve(videoPath));
 });
 
 module.exports = router; 
