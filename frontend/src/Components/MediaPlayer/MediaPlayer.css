@@ -1,4 +1,3 @@
-/* Ensure the video player's container has a black background */
 div.video-react {
     color: white !important;
     height: 100% !important;
@@ -7,9 +6,6 @@ div.video-react {
     padding: 0 !important;
 }
 
-
-
-/* Ensure the video area inherits the black background */
 div.video-react .video-react-video {
     background-color: transparent !important;
 }

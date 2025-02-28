@@ -6,14 +6,6 @@ const hlsConfig = {
     maxBufferSize: 5 * 1024,
 };
 
-/**
- * Initializes and attaches HLS to a given media element.
- *
- * @param mediaElement - The media element (audio/video) to attach HLS to.
- * @param source - The HLS source URL (ends with .m3u8).
- * @param onMediaTypeDetected - Callback to notify whether the stream is audio or video.
- * @returns A cleanup function to destroy the HLS instance and remove event listeners.
- */
 export const initializeHls = (
     mediaElement: HTMLMediaElement,
     source: string,
