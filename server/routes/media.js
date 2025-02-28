@@ -9,7 +9,7 @@ const fs = require('fs');
 // Configure multer for file upload
 const upload = multer({
   dest: 'uploads/',
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 150 * 1024 * 1024 }
 });
 
 // Store conversion jobs in memory
@@ -229,9 +229,9 @@ router.post('/convert', upload.single('file'), async (req, res) => {
 router.get('/convert', (req, res) => {
   try {
     // Get tracked conversions and convert to array of objects
-    const activeConversions = Array.from(conversions.entries()).map(([id, conv, status, type]) => ({
+    const activeConversions = Array.from(conversions.entries()).map(([id, conv]) => ({
       conversionId: id,
-      status, type,
+      ...conv,
       thumbnails: fs.existsSync(path.join('converted', id, 'thumbnail.jpg')) ? {
         main: `/media/thumbnails/${id}/thumbnail.jpg`,
         previews: Array.from({ length: 10 }, (_, i) => 
