@@ -14,15 +14,16 @@ function EditMedia() {
   const [value, setValue] = React.useState([0, 100]);
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [marks, setMarks] = useState<{ value: number; label: string }[]>([]);
+  const [thumbnails, setThumbnails] = useState<string[]>([]);
 
   const handleChange = (event, newValue) => {
     // Ensure start time is not more than end value
     // and end value is not less than start time
     if (newValue[0] >= newValue[1]) {
-      newValue[0] = newValue[1]; // Set start to end if start is greater
+      newValue[0] = newValue[1]; 
     }
     if (newValue[1] <=newValue[0]) {
-      newValue[1] = newValue[0]; // Set end to start if end is less
+      newValue[1] = newValue[0]; 
     }
     
     console.log(event, newValue);
@@ -86,6 +87,49 @@ function EditMedia() {
     }
   };
 
+  const generateThumbnail = (videoUrl: string, timeInSeconds: number) => {
+    return new Promise<string>((resolve, reject) => {
+      const video = document.createElement('video');
+      video.src = videoUrl;
+      video.currentTime = timeInSeconds;
+
+      video.addEventListener('loadeddata', () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 50; 
+        canvas.height = 50;
+        const context = canvas.getContext('2d');
+
+        // Draw the video frame to the canvas
+        context?.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Convert canvas to data URL (base64)
+        const thumbnail = canvas.toDataURL('image/png');
+        resolve(thumbnail);
+      });
+
+      video.addEventListener('error', (err) => {
+        reject(err);
+      });
+
+      // Load the video
+      video.load();
+    });
+  };
+
+  const createThumbnails = async () => {
+    const intervals = Array.from({ length: 20 }, (_, index) => Math.max(1, Math.floor(videoDuration * (index / 19))));
+    console.log(intervals)
+    const generatedThumbnails = await Promise.all(
+      intervals.map((time) => generateThumbnail(videoUrl, time))
+    );
+    setThumbnails(generatedThumbnails);
+  };
+
+  useEffect(() => {
+    if (videoUrl && videoDuration) {
+      createThumbnails();
+    }
+  }, [videoUrl, videoDuration]);
 
   const handleFileUpload = async () => {
     if (!selectedFile) return;
@@ -134,10 +178,10 @@ function EditMedia() {
             <div className="cutterWrapper">
               {/* render 10 images with 50*50 */}
               <div className="imageRow">
-                {Array.from({ length: 10 }).map((_, index) => (
+                {thumbnails.map((thumbnail, index) => (
                   <img
                     key={index}
-                    src="https://picsum.photos/100" // Placeholder image URL
+                    src={thumbnail}
                     alt={`Dummy ${index + 1}`}
                   />
                 ))}
