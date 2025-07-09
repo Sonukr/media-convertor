@@ -10,6 +10,7 @@
 /server/converted
 /server/uploads
 /frontend/node_modules
+/frontend/dist
 
 
 /.pnp
